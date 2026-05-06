@@ -1,0 +1,62 @@
+import subprocess
+import logging
+import whisper
+import json
+import pathlib
+
+logger = logging.getLogger(__name__)
+
+## Function to Extract Audio from Video
+def extract_audio(input_file,output_file):
+    ffmpeg_command = [
+        "ffmpeg",
+        "-i", input_file,
+        "-vn",
+        "-acodec", "pcm_s16le",
+        "-ar", "16000",
+        "-ac", "1",
+        output_file
+    ]
+
+    try:
+        subprocess.run(ffmpeg_command,check=True)
+        logger.info(f"Audio extracted successfully to {output_file}")
+        return True
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Error extracting audio: {e}")
+        return Exception("Audio Extraction failed")
+
+def transcribe_audio(audio_file):
+    try:
+        logger.info("Loading Whisper model")
+        model = whisper.load_model("turbo")
+
+        result = model.transcribe(audio_file)
+
+        logger.info("Transcription Completed")
+        if result:
+            folder_path = pathlib.Path("cache/transcripts")
+            folder_path.mkdir(parents=True, exist_ok=True)
+
+            file_path = folder_path / f"{audio_file}.json"
+            
+            data = []
+
+            ## Writing the transcript data
+            with open(file_path,"w",encoding="utf-8") as json_file:
+                for segment in result["segments"]:
+                    data.append({
+                        "start":segment["start"],
+                        "end":segment["end"],
+                        "text":segment["text"]
+                    })
+
+                json.dump(data, json_file, ensure_ascii=False, indent=4)
+                json_file.write("\n")   
+
+            logger.info("Transcription saved successfully")
+            return True
+        return None
+    except Exception as e:
+        logger.error(f"Error transcribing audio: {e}")
+        return Exception("Transcription failed")

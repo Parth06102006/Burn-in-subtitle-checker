@@ -4,4 +4,10 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "opencv-python>=4.13.0.92",
+    "pillow>=12.2.0",
+    "pytesseract>=0.3.13",
+    "python-dotenv>=1.2.2",
+    "rapidfuzz>=3.14.5",
+]

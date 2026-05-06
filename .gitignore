@@ -4,3 +4,15 @@ venv
 
 ## Sample output 
 cache
+
+__pycache__
+
+.env
+
+input
+output
+
+debug.log
+
+*.mp4
+*.wav
