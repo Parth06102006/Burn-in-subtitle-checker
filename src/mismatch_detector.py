@@ -8,7 +8,6 @@ import logging
 logger = logging.getLogger(__name__)
 
 def normalise(text):
-    logger.info("Normalizing Texts")
     text = unicodedata.normalize("NFC", text)
     text = text.strip().lower()
     text = re.sub(r'[^\w\s]', '', text)
@@ -51,7 +50,8 @@ def compare(transcription_file, ocr_result_file, output_file=None):
                     "status":     "OCR_FAILED"
                 })
                 continue
-
+            
+            logger.info("Normalizing Texts and Calculating Score")
             score = fuzz.token_sort_ratio(
                 normalise(audio_text),
                 normalise(ocr_text)
