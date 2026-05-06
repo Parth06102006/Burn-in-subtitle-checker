@@ -14,10 +14,35 @@ load_dotenv(dotenv_path=env_path)
 logger = logging.getLogger(__name__)
 
 
-def extract_subtitles(video_file, transcript_file):
+def find_real_bottom(frame, std_threshold=8):
+    """
+    Detects padding by row uniformity — works for
+    dark padding, light padding, or no padding at all.
+    """
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    h = gray.shape[0]
+
+    for y in range(h - 1, -1, -1):
+        row_std = gray[y, :].std()
+        if row_std > std_threshold:
+            return y
+
+    return h - 1
+
+
+def get_subtitle_strip(frame, subtitle_fraction=0.15,
+                       std_threshold=8):
+    real_bottom    = find_real_bottom(frame, std_threshold)
+    content_height = real_bottom + 1
+    crop_top       = int(real_bottom - (content_height * subtitle_fraction))
+    crop_top       = max(0, crop_top)
+
+    return frame[crop_top:real_bottom + 1, :]
+
+def extract_subtitles(video_file, transcript_file, output_dir=None):
     data = None
     data_ocr = []
-    with open(transcript_file,"r") as json_file:
+    with open(transcript_file, "r", encoding="utf-8") as json_file:
         data = json.load(json_file)
 
     tess_path = os.environ.get("TESSERACT_FILE_PATH")
@@ -29,7 +54,7 @@ def extract_subtitles(video_file, transcript_file):
         for i in data:
             start = i["start"]
             end = i["end"]
-            mid_point = start+(end-start)/2
+            mid_point = round(start+(end-start)/2,2)
 
             vid = cv2.VideoCapture(video_file)
             vid.set(cv2.CAP_PROP_POS_MSEC, mid_point * 1000)
@@ -37,13 +62,13 @@ def extract_subtitles(video_file, transcript_file):
             success, frame = vid.read()
 
             if not success:
-                raise Exception("Frame capture failed")
+                logger.warning(f"Frame capture failed for midpoint {mid_point}. Skipping.")
+                continue
 
-            height, width = frame.shape[:2]
-            cropped_frame = frame[int(height * 0.75):height, 0:width]
+            cropped_frame = get_subtitle_strip(frame)
 
-            video_name = f"{pathlib.Path(video_file).name}"
-            folder_path = pathlib.Path(f"cache/tests/{video_name}")
+            video_name = pathlib.Path(video_file).name
+            folder_path = pathlib.Path(output_dir) if output_dir else pathlib.Path(f"cache/tests/{video_name}")
             folder_path.mkdir(parents=True, exist_ok=True)
 
             if not cv2.imwrite(str(folder_path / f"original_{mid_point}.jpg"), frame):
@@ -107,4 +132,3 @@ def extract_subtitles(video_file, transcript_file):
         if vid is not None:
             vid.release()
         cv2.destroyAllWindows()
-

@@ -24,13 +24,13 @@ def classify(score, threshold_ok=0.8, threshold_review=0.6):
         return "MISMATCH"
     
 
-def compare(transcription_file,ocr_result_file):
+def compare(transcription_file, ocr_result_file, output_file=None):
     try:
         logger.info("Started Comparing Results")
-        with open(transcription_file,encoding="utf-8") as json_file:
+        with open(transcription_file, encoding="utf-8") as json_file:
             transcription = json.load(json_file)
 
-        with open(ocr_result_file,encoding="utf-8") as json_file:
+        with open(ocr_result_file, encoding="utf-8") as json_file:
             ocr_results = json.load(json_file)
 
         results = []
@@ -68,12 +68,14 @@ def compare(transcription_file,ocr_result_file):
                 "status":     classify(score)
             })
 
-        file_path = f"{pathlib.Path(transcription_file).parent}/mismatch_report.json"
-        with open(file_path,"w",encoding="utf-8") as json_file:
-            json.dump(results,json_file,ensure_ascii=False,indent=4)
+        file_path = pathlib.Path(output_file) if output_file else pathlib.Path(ocr_result_file).parent / "mismatch_report.json"
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+
+        with open(file_path, "w", encoding="utf-8") as json_file:
+            json.dump(results, json_file, ensure_ascii=False, indent=4)
 
         logger.info(f"Completed the mismatch report . Saved at {file_path}")
-        return True
+        return str(file_path)
     except Exception as e:
         logger.error("Unable to analyze the texts")
         raise

@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 def extract_audio(input_file,output_file):
     ffmpeg_command = [
         "ffmpeg",
+        "-y",
         "-i", input_file,
         "-vn",
         "-acodec", "pcm_s16le",
@@ -26,7 +27,7 @@ def extract_audio(input_file,output_file):
         logger.error(f"Error extracting audio: {e}")
         return Exception("Audio Extraction failed")
 
-def transcribe_audio(audio_file):
+def transcribe_audio(audio_file, output_dir=None):
     try:
         logger.info("Loading Whisper model")
         model = whisper.load_model("turbo")
@@ -35,10 +36,10 @@ def transcribe_audio(audio_file):
 
         logger.info("Transcription Completed")
         if result:
-            folder_path = pathlib.Path("cache/transcripts")
+            folder_path = pathlib.Path(output_dir) if output_dir else pathlib.Path("cache/transcripts")
             folder_path.mkdir(parents=True, exist_ok=True)
 
-            file_path = folder_path / f"{audio_file}.json"
+            file_path = folder_path / f"{pathlib.Path(audio_file).name}.json"
             
             data = []
 
@@ -55,7 +56,7 @@ def transcribe_audio(audio_file):
                 json_file.write("\n")   
 
             logger.info("Transcription saved successfully")
-            return True
+            return str(file_path)
         return None
     except Exception as e:
         logger.error(f"Error transcribing audio: {e}")
