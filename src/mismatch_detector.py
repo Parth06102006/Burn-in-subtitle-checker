@@ -34,7 +34,7 @@ def compare(transcription_file, ocr_result_file, output_file=None):
 
         results = []
 
-        for i, (seg, ocr) in enumerate(zip(transcription, ocr_results)):
+        for i, (seg, ocr) in enumerate(zip(transcription["transcription"], ocr_results)):
             audio_text = seg["text"].strip()
             ocr_text   = ocr["ocr_text"].strip()
 

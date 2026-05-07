@@ -41,18 +41,20 @@ def transcribe_audio(audio_file, output_dir=None):
 
             file_path = folder_path / f"{pathlib.Path(audio_file).name}.json"
             
+            data_ocr = {"language_detected":result["language"]}
             data = []
 
             ## Writing the transcript data
             with open(file_path,"w",encoding="utf-8") as json_file:
                 for segment in result["segments"]:
                     data.append({
-                        "start":segment["start"],
-                        "end":segment["end"],
+                        "start":round(segment["start"],2),
+                        "end":round(segment["end"],2),
                         "text":segment["text"]
                     })
 
-                json.dump(data, json_file, ensure_ascii=False, indent=4)
+                data_ocr["transcription"] = data
+                json.dump(data_ocr, json_file, ensure_ascii=False, indent=4)
                 json_file.write("\n")   
 
             logger.info("Transcription saved successfully")

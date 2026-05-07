@@ -22,12 +22,12 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Check burned-in subtitles against audio transcripts.")
     parser.add_argument(
         "--input-dir",
-        default="input",
+        default="input_second",
         help="Folder containing video files to process."
     )
     parser.add_argument(
         "--output-dir",
-        default="output",
+        default="output_third_B",
         help="Folder where audio files and per-video reports will be saved."
     )
     return parser.parse_args()
