@@ -24,7 +24,10 @@ flowchart TD
     K --> L{Valid text?}
     L -- no --> M[EasyOCR fallback]
     L -- yes --> N[Clean OCR text]
-    M --> N
+    M --> X{Still failed?}
+    X -- yes --> Y[Retry Tesseract/EasyOCR with eng+hin+kan]
+    X -- no --> N
+    Y --> N
     N --> O[Consolidate frame OCR results]
     O --> P[ocr_output.json]
 
@@ -70,7 +73,7 @@ flowchart TD
    - black-text-on-white normalization
 
 7. **OCR engine selection**
-   Tesseract runs first. If its result is empty, invalid, or noisy, EasyOCR is used as a fallback.
+   Tesseract runs first with the language detected by Whisper. If its result is empty, invalid, or noisy, EasyOCR is used as a fallback. If both engines fail for the detected language, the extractor retries with the combined OCR language set `eng+hin+kan`.
 
 8. **OCR cleanup and validation**
    OCR output is normalized and cleaned to reduce repeated-character hallucinations such as repeated Indic characters, repeated short tokens, or repeated noisy fragments. The extractor also warns when an OCR image shape looks suspiciously tall, which can indicate accidental stacked strips.
@@ -134,15 +137,15 @@ flowchart TD
 |   |-- report_generator.py
 |   |-- subtitle_extractor.py
 |   `-- transcriber.py
-|-- input_second
-`-- output_third_B
+|-- input
+`-- output
 ```
 
 Key files:
 
 - `main.py`: batch runner and pipeline orchestrator.
 - `src/transcriber.py`: FFmpeg audio extraction and Whisper transcription.
-- `src/subtitle_extractor.py`: frame sampling, subtitle preprocessing, OCR, cleanup, and consolidation.
+- `src/subtitle_extractor.py`: frame sampling, subtitle preprocessing, OCR engine fallback/retry, cleanup, and consolidation.
 - `src/mismatch_detector.py`: transcript-versus-OCR comparison.
 - `src/report_generator.py`: HTML report creation.
 
@@ -152,12 +155,6 @@ Install Python dependencies:
 
 ```bash
 pip install -r requirements.txt
-```
-
-The code also imports `whisper` and `easyocr`. If they are not already installed in your environment, install them:
-
-```bash
-pip install openai-whisper easyocr
 ```
 
 Install system dependencies:
@@ -177,7 +174,7 @@ TESSERACT_FILE_PATH=C:\Program Files\Tesseract-OCR\tesseract.exe
 Put videos in the input folder, then run:
 
 ```bash
-python main.py --input-dir input_second --output-dir output_third_B
+python main.py --input-dir input --output-dir output
 ```
 
 Default values:
@@ -186,14 +183,14 @@ Default values:
 python main.py
 ```
 
-This reads from `input_second` and writes to `output_third_B`.
+This reads from `input` and writes to `output`.
 
 ## Output
 
 For each video, the pipeline creates a folder under the output directory:
 
 ```text
-output_third_B
+output
 |-- audio
 |   `-- video_name.wav
 `-- video_name
@@ -201,9 +198,10 @@ output_third_B
     |-- ocr_output.json
     |-- mismatch_report.json
     |-- mismatch_report.html
-    |-- original_seg*_*.jpg
-    |-- cropped_seg*_*.jpg
-    `-- debug_seg*_*.jpg
+    `-- images
+        |-- original_seg*_*.jpg
+        |-- cropped_seg*_*.jpg
+        `-- debug_seg*_*.jpg
 ```
 
 Important outputs:
@@ -212,7 +210,8 @@ Important outputs:
 - `ocr_output.json`: OCR text extracted from video frames.
 - `mismatch_report.json`: comparison results with scores and statuses.
 - `mismatch_report.html`: human-readable report.
-- `debug_seg*.jpg`: preprocessed OCR images for debugging.
+- `images/debug_seg*.jpg`: preprocessed OCR images for debugging.
+- `images/original_seg*.jpg` and `images/cropped_seg*.jpg`: original sampled frames and cropped subtitle strips.
 - `debug.log`: full processing log.
 
 ## OCR Reliability Notes
@@ -245,21 +244,23 @@ EasyOCR fallback uses:
 | `eng` | `en` |
 | `kan` | `kn` |
 
+If the detected-language OCR pass fails, the extractor retries Tesseract and EasyOCR with all configured OCR languages: `eng+hin+kan`.
+
 ## Debugging
 
 Check `debug.log` when OCR output looks strange. Useful signals:
 
 - `Suspicious Tesseract OCR image shape`: possible stacked OCR image.
 - `Rejected noisy OCR text`: OCR produced text-like noise and fallback or failure was triggered.
-- `engine=tesseract` or `engine=easyocr`: shows which OCR engine produced each frame result.
+- `engine=tesseract`, `engine=easyocr`, `engine=tesseract_multi`, or `engine=easyocr_multi`: shows which OCR engine produced each frame result.
 - `Consolidated stable` or `Consolidated changed subtitle`: shows how start, middle, and end OCR samples were merged.
 
 Open the saved debug images to inspect what OCR actually received:
 
 ```text
-debug_seg0_start.jpg
-debug_seg0_mid.jpg
-debug_seg0_end.jpg
+images/debug_seg0_start.jpg
+images/debug_seg0_mid.jpg
+images/debug_seg0_end.jpg
 ```
 
 If each image contains only one subtitle strip, stacking is unlikely. If one image contains multiple vertical strips, the issue is happening before OCR.

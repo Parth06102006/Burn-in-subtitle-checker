@@ -27,7 +27,7 @@ def parse_args():
     )
     parser.add_argument(
         "--output-dir",
-        default="output_third_B",
+        default="output_second",
         help="Folder where audio files and per-video reports will be saved."
     )
     return parser.parse_args()

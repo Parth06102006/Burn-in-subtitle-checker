@@ -22,6 +22,8 @@ WHISPER_TO_TESSERACT = {
     "kn": "kan",
 }
 
+FALLBACK_OCR_LANG = "eng+hin+kan"
+
 # ── Padding removal ────────────────────────────────────────────
 
 
@@ -266,8 +268,21 @@ def get_expected_script_chars(text, lang_code):
         "kan": (0x0C80, 0x0CFF),
         "eng": (0x0041, 0x007A),
     }
-    start_r, end_r = ranges.get(lang_code, (0x0900, 0x097F))
-    return sum(1 for c in text if start_r <= ord(c) <= end_r)
+    lang_parts = lang_code.split("+")
+    active_ranges = [
+        ranges[part]
+        for part in lang_parts
+        if part in ranges
+    ]
+
+    if not active_ranges:
+        active_ranges = list(ranges.values())
+
+    return sum(
+        1
+        for c in text
+        if any(start_r <= ord(c) <= end_r for start_r, end_r in active_ranges)
+    )
 
 
 def get_ocr_quality_score(text, lang_code="hin"):
@@ -278,9 +293,10 @@ def get_ocr_quality_score(text, lang_code="hin"):
     if not compact:
         return 0
 
+    lang_parts = lang_code.split("+")
     script_chars = get_expected_script_chars(text, lang_code)
     alpha_chars = sum(1 for c in text if c.isalpha())
-    useful_chars = script_chars if lang_code != "eng" else alpha_chars
+    useful_chars = alpha_chars if "eng" in lang_parts else script_chars
 
     allowed_punctuation = set("।,.!?\"'“”‘’()-॰")
     suspicious_chars = set("_[]{}<>/\\|*=~^`@#$%&+:;«»")
@@ -419,8 +435,15 @@ def run_easyocr(image, lang_code):
 
         # EasyOCR uses different language codes
         easy_lang_map = {"hin": "hi", "eng": "en", "kan": "kn"}
-        easy_lang     = easy_lang_map.get(lang_code, "en")
-        reader        = easyocr.Reader([easy_lang], gpu=False)
+        easy_langs = [
+            easy_lang_map[part]
+            for part in lang_code.split("+")
+            if part in easy_lang_map
+        ]
+        if not easy_langs:
+            easy_langs = ["en", "hi", "kn"]
+
+        reader        = easyocr.Reader(easy_langs, gpu=False)
         results       = reader.readtext(image, detail=0)
         text          = " ".join(results).strip()
         return clean_ocr_text(text)
@@ -433,6 +456,7 @@ def run_ocr(image, lang):
     """
     Try Tesseract first.
     Fall back to EasyOCR if Tesseract returns garbage or nothing.
+    If the detected language fails, retry with all configured OCR languages.
     """
     text = run_tesseract(image, lang)
     if is_acceptable_ocr_text(text, lang):
@@ -443,12 +467,24 @@ def run_ocr(image, lang):
     if is_acceptable_ocr_text(text, lang):
         return text, "easyocr"
 
+    if lang != FALLBACK_OCR_LANG:
+        logger.info(
+            f"OCR failed for {lang} - retrying with {FALLBACK_OCR_LANG}"
+        )
+        text = run_tesseract(image, FALLBACK_OCR_LANG)
+        if is_acceptable_ocr_text(text, FALLBACK_OCR_LANG):
+            return text, "tesseract_multi"
+
+        text = run_easyocr(image, FALLBACK_OCR_LANG)
+        if is_acceptable_ocr_text(text, FALLBACK_OCR_LANG):
+            return text, "easyocr_multi"
+
     return "", "failed"
 
 # ── Single frame processor ─────────────────────────────────────
 
 def process_single_frame(vid, timestamp_s, lang,
-                          folder_path, label):
+                          folder_path_images, label):
     """
     Seek to timestamp_s, extract frame, preprocess, run OCR.
     Returns OCR text string. label is used for debug filenames.
@@ -462,7 +498,7 @@ def process_single_frame(vid, timestamp_s, lang,
 
     # Save original for debugging
     cv2.imwrite(
-        str(folder_path / f"original_{label}.jpg"), frame)
+        str(folder_path_images / f"original_{label}.jpg"), frame)
 
 
     ## Calling to get the subtitle rectangular region
@@ -470,14 +506,14 @@ def process_single_frame(vid, timestamp_s, lang,
 
     ## Save the cropped image for further processing
     cv2.imwrite(
-        str(folder_path / f"cropped_{label}.jpg"), strip)
+        str(folder_path_images / f"cropped_{label}.jpg"), strip)
 
     ## Calling the function to get the processed strip for the OCR to run and produce text more accurately
     processed = preprocess_for_ocr(strip)
 
     ## Saved the processed image for the ocr 
     cv2.imwrite(
-        str(folder_path / f"debug_{label}.jpg"), processed)
+        str(folder_path_images / f"debug_{label}.jpg"), processed)
 
     text, engine = run_ocr(processed, lang)
     logger.info(f"  [{label}] engine={engine} text='{text[:40]}'")
@@ -485,7 +521,7 @@ def process_single_frame(vid, timestamp_s, lang,
 
 # ── Consolidation ──────────────────────────────────────────────
 
-def consolidate_ocr_results(results, similarity_threshold=70):
+def consolidate_ocr_results(results, lang_code="hin", similarity_threshold=70):
     """
     Given OCR text from start/mid/end frames,
     return the best text plus a consolidation status.
@@ -497,7 +533,7 @@ def consolidate_ocr_results(results, similarity_threshold=70):
     start_text, mid_text, end_text = results
     valid = [
         r for r in results
-        if len(r) >= 3 and get_ocr_quality_score(r) > 0
+        if len(r) >= 3 and get_ocr_quality_score(r, lang_code) > 0
     ]
 
     if not valid:
@@ -517,7 +553,7 @@ def consolidate_ocr_results(results, similarity_threshold=70):
         subtitle_changed = False
 
     if not subtitle_changed:
-        best = max(valid, key=get_ocr_quality_score)
+        best = max(valid, key=lambda text: get_ocr_quality_score(text, lang_code))
         logger.info(f"  Consolidated stable: '{best[:40]}' "
                     f"(from {len(valid)}/3 valid frames)")
         return best, "stable"
@@ -527,7 +563,7 @@ def consolidate_ocr_results(results, similarity_threshold=70):
     def add_if_new(text):
         if len(text) < 3:
             return
-        if get_ocr_quality_score(text) <= 0:
+        if get_ocr_quality_score(text, lang_code) <= 0:
             logger.info(f"Skipping noisy consolidation candidate: '{text[:60]}'")
             return
         if not unique_parts:
@@ -567,7 +603,7 @@ def extract_subtitles(video_file, transcript_file, output_dir=None):
 
     # Language mapping from Whisper code to Tesseract code
     whisper_lang = data.get("language_detected", "hin") ## !! To add multi if the languag is not detected by whisper
-    tess_lang    = WHISPER_TO_TESSERACT.get(whisper_lang, "hin")
+    tess_lang    = WHISPER_TO_TESSERACT.get(whisper_lang, FALLBACK_OCR_LANG)
     logger.info(f"Using OCR language: {tess_lang} (from Whisper: {whisper_lang})")
 
     data_ocr  = []
@@ -576,6 +612,9 @@ def extract_subtitles(video_file, transcript_file, output_dir=None):
                    if output_dir ## cahche is here the temporary folder created for the test purpose
                    else pathlib.Path(f"cache/tests/{video_name}"))
     folder_path.mkdir(parents=True, exist_ok=True)
+    folder_path_images = pathlib.Path(f"{folder_path}/images")
+    folder_path_images.mkdir(parents=True,exist_ok=True)
+
 
     vid = cv2.VideoCapture(video_file)
     if not vid.isOpened():
@@ -597,17 +636,18 @@ def extract_subtitles(video_file, transcript_file, output_dir=None):
             logger.info(f"Segment {i}: {start:.2f}s–{end:.2f}s")
 
             text_start = process_single_frame(
-                vid, t_start, tess_lang, folder_path,
+                vid, t_start, tess_lang, folder_path_images,
                 label=f"seg{i}_start")
             text_mid   = process_single_frame(
-                vid, t_mid,   tess_lang, folder_path,
+                vid, t_mid,   tess_lang, folder_path_images,
                 label=f"seg{i}_mid")
             text_end   = process_single_frame(
-                vid, t_end,   tess_lang, folder_path,
+                vid, t_end,   tess_lang, folder_path_images,
                 label=f"seg{i}_end")
 
             final_text, consolidation_status = consolidate_ocr_results(
-                [text_start, text_mid, text_end]
+                [text_start, text_mid, text_end],
+                lang_code=tess_lang
             )
 
             data_ocr.append({
